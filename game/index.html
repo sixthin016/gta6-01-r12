@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Neon Bay — Golden Hour Getaway: an 18-mission open-world crime game in the island city of Neon Bay. 5-star NBPD chases, crew, garage, radio, Hurricane Solana countdown. Tue 24 Nov 2026, 17:42.">
+<link rel="icon" href="data:,">
+<title>Neon Bay — Golden Hour Getaway | Open-World Crime Game</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a2a3a; font-family: 'Segoe UI', system-ui, sans-serif; color: #f2f5f9; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .hidden { display: none !important; }
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  .panel { background: rgba(8, 14, 26, 0.72); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 10px; padding: 8px 12px; backdrop-filter: blur(3px); }
+  #top-left { position: absolute; top: 14px; left: 14px; display: flex; flex-direction: column; gap: 6px; }
+  #stars { font-size: 26px; letter-spacing: 3px; color: #ffd166; text-shadow: 0 0 12px rgba(255, 209, 102, 0.7); }
+  #stars.hot { color: #ff3b30; text-shadow: 0 0 14px rgba(255, 59, 48, 0.9); animation: pulse 0.7s infinite alternate; }
+  @keyframes pulse { from { transform: scale(1); } to { transform: scale(1.08); } }
+  #cash { font-size: 22px; font-weight: 700; color: #7dff5e; }
+  #respect, #missions { font-size: 13px; color: #cbd5e1; }
+  #health-bar { width: 190px; height: 12px; background: rgba(255,255,255,0.15); border-radius: 6px; overflow: hidden; }
+  #health-fill { height: 100%; width: 100%; background: linear-gradient(90deg, #37d67a, #7dff5e); transition: width 0.25s; }
+  #health-fill.low { background: linear-gradient(90deg, #ff3b30, #ff7a2a); }
+  #health-text { font-size: 12px; color: #cbd5e1; }
+  #top-right { position: absolute; top: 14px; right: 14px; text-align: right; display: flex; flex-direction: column; gap: 6px; }
+  #clock { font-size: 16px; font-weight: 700; color: #ffb36b; }
+  #district { font-size: 15px; color: #9fc4e8; }
+  #radio { font-size: 13px; color: #ffd7f6; }
+  #objective-box { position: absolute; left: 50%; bottom: 118px; transform: translateX(-50%); text-align: center; min-width: 340px; max-width: 580px; }
+  #objective-title { font-size: 15px; font-weight: 800; color: #ffd166; letter-spacing: 1px; text-transform: uppercase; }
+  #objective { font-size: 15px; color: #fff; margin-top: 2px; }
+  #bottom-right { position: absolute; right: 14px; bottom: 14px; text-align: right; }
+  #speed { font-size: 30px; font-weight: 800; color: #fff; text-shadow: 0 2px 8px rgba(0,0,0,0.6); }
+  #ammo { font-size: 13px; color: #cbd5e1; }
+  #crew { position: absolute; right: 14px; top: 168px; display: flex; flex-direction: column; gap: 6px; }
+  .crew-chip { background: rgba(8, 14, 26, 0.72); border: 1px solid var(--c, #fff); border-left-width: 5px; border-radius: 8px; padding: 6px 10px; font-size: 13px; font-weight: 700; color: #fff; }
+  #minimap { position: absolute; left: 14px; bottom: 14px; width: 200px; height: 200px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.35); box-shadow: 0 0 0 4px rgba(8,14,26,0.6); background: #0a101c; }
+  #feed { position: absolute; left: 14px; bottom: 226px; display: flex; flex-direction: column; gap: 5px; max-width: 380px; }
+  .feed-msg { background: rgba(8, 14, 26, 0.8); border-left: 3px solid #ffd166; padding: 7px 10px; border-radius: 6px; font-size: 14px; transition: opacity 0.6s; }
+  .feed-msg.fade { opacity: 0; }
+  #controls-hint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); font-size: 12px; color: rgba(255,255,255,0.75); background: rgba(8,14,26,0.6); padding: 5px 10px; border-radius: 6px; }
+  #start-screen { position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; background: linear-gradient(160deg, rgba(20,8,32,0.82), rgba(8,20,40,0.78)); }
+  #start-card { max-width: 620px; padding: 34px 38px; background: rgba(10, 16, 28, 0.88); border: 1px solid rgba(255, 79, 216, 0.45); border-radius: 16px; box-shadow: 0 0 60px rgba(255, 79, 216, 0.25); }
+  #start-card h1 { font-size: 44px; letter-spacing: 2px; color: #ffd166; text-shadow: 0 0 24px rgba(255, 79, 216, 0.6); }
+  #start-card h2 { font-size: 17px; color: #37e6ff; margin: 4px 0 14px; font-weight: 600; }
+  #start-card p { font-size: 15px; line-height: 1.55; color: #dbe4ee; margin-bottom: 12px; }
+  #start-card .facts { font-size: 13px; color: #9fc4e8; line-height: 1.7; margin-bottom: 18px; }
+  #start-card button { pointer-events: auto; cursor: pointer; font-size: 16px; font-weight: 700; padding: 12px 22px; margin-right: 10px; border: none; border-radius: 10px; background: linear-gradient(90deg, #ff4fd8, #ffb13d); color: #1a0b2e; }
+  #start-card button.secondary { background: rgba(255,255,255,0.14); color: #fff; border: 1px solid rgba(255,255,255,0.35); }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="top-left">
+    <div id="stars" class="panel">☆☆☆☆☆</div>
+    <div id="cash" class="panel">$500</div>
+    <div class="panel"><div id="respect">Respect 0 · Crew 3/3</div><div id="missions">Missions 0/18</div></div>
+    <div class="panel"><div id="health-bar"><div id="health-fill"></div></div><div id="health-text">100 HP</div></div>
+  </div>
+  <div id="top-right">
+    <div id="clock" class="panel">Hurricane Solana: 05:18:00 to landfall · 17:42</div>
+    <div id="district" class="panel">Coral Beach</div>
+    <div id="radio" class="panel">Bay FM 88.4 — Neon Nights</div>
+  </div>
+  <div id="crew"></div>
+  <div id="objective-box" class="panel"><div id="objective-title">Neon Bay</div><div id="objective">Welcome to Neon Bay.</div></div>
+  <canvas id="minimap" width="200" height="200"></canvas>
+  <div id="feed"></div>
+  <div id="bottom-right"><div id="speed"></div><div id="ammo">Pistol 12/48</div></div>
+  <div id="controls-hint">WASD drive/walk · E steal car · Click shoot · 1/2/3 weapons · T reload · R radio · M missions · H help · P pause</div>
+</div>
+<noscript><p style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#1a2a3a;color:#fff;z-index:99">Neon Bay needs JavaScript to play.</p></noscript>
+
+<div id="start-screen">
+  <div id="start-card">
+    <h1>NEON BAY</h1>
+    <h2>Golden Hour Getaway — an open-world crime game</h2>
+    <p>You are <b>Rae Vega</b>, 27, a dock driver fresh out of the Neon Bay docks. With your crew —
+    <b>Dune</b> the driver, <b>Mara</b> the hacker, <b>Kip</b> the muscle — pull one last score:
+    the <b>$250,000 Harbor Reserve vault</b>, before <b>Hurricane Solana</b> makes landfall
+    tonight at <b>23:00</b>.</p>
+    <div class="facts">18 story missions · 5 districts (Coral Beach, Mercado, Neon Row, Harbor, Highway Loop) ·
+    5-star NBPD with roadblocks + Air One helicopter · 4 garage cars · 3 radio stations ·
+    crew perks · autosave · Tue 24 Nov 2026, 17:42, golden hour.</div>
+    <button id="start-btn">Start — new game ($500)</button>
+    <button id="continue-btn" class="secondary">Continue saved game</button>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
