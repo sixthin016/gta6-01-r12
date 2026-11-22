@@ -1,4 +1,5 @@
 // Neon Bay — the city (game/src/world.js).
+//
 // The island is a 520 x 520 metre grid, five districts stitched around
 // one road loop, with the ocean to the east and Coral Beach along it.
 // Every district has its own palette and props, so a screenshot can be
@@ -10,6 +11,10 @@
 // The sky is the real golden-hour photograph (assets/sky.jpg) wrapped
 // around the world as a backdrop dome, so the horizon is never a flat
 // colour.
+//
+// buildWorld() assembles the city district by district (see the
+// build* helpers below); applyPhotos() swaps the photographic textures
+// in the moment they finish loading.
 import * as THREE from '../vendor/three.module.min.js';
 import { mulberry32, pick, range, rangeInt } from './rng.js';
 
@@ -42,6 +47,7 @@ const PALETTES = {
   highway: ['#5a6068', '#3a3e46', '#d8c25a', '#2e3138', '#8a929c'],
 };
 
+// A shadow-casting box with a standard material.
 function box(w, h, d, color, opts = {}) {
   const mat = new THREE.MeshStandardMaterial({
     color, roughness: opts.rough ?? 0.85, metalness: opts.metal ?? 0.05,
@@ -50,6 +56,16 @@ function box(w, h, d, color, opts = {}) {
   });
   const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
   m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+
+// A flat ground plane (ocean, sand, city ground, roads) laid on the
+// XZ plane at the given height.
+function groundPlane(w, d, mat, x, z, y = 0) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(x, y, z);
+  m.receiveShadow = true;
   return m;
 }
 
@@ -130,17 +146,14 @@ export function makeNeonSign(textures, text, width = 9) {
   return m;
 }
 
-export function buildWorld(scene, textures, photos) {
-  const rand = mulberry32(1987);
-  const root = new THREE.Group();
-  root.name = 'NeonBayCity';
-  scene.add(root);
+// --- District builders ------------------------------------------------
 
-  // --- Sky dome: the real golden-hour photograph when it has loaded,
-  // a painted sunset gradient until then. The photo arrives
-  // asynchronously (see applyPhotoSky below); the dome exists from
-  // the first frame either way, so the horizon is never a flat colour.
-  const skyGeo = new THREE.SphereGeometry(900, 24, 16);
+// Sky dome: the real golden-hour photograph when it has loaded, a
+// painted sunset gradient until then. The photo arrives asynchronously
+// (see applyPhotos below); the dome exists from the first frame either
+// way, so the horizon is never a flat colour. Returns the sky material
+// so applyPhotos() can swap the photo in later.
+function buildSky(root, photos) {
   const skyCanvas = document.createElement('canvas');
   skyCanvas.width = 512; skyCanvas.height = 256;
   const sctx = skyCanvas.getContext('2d');
@@ -156,52 +169,50 @@ export function buildWorld(scene, textures, photos) {
   const skyMat = new THREE.MeshBasicMaterial({
     map: photos.sky ?? skyFallback, side: THREE.BackSide, fog: false,
   });
-  const sky = new THREE.Mesh(skyGeo, skyMat);
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(900, 24, 16), skyMat);
   sky.name = 'GoldenHourSky';
   root.add(sky);
+  return skyMat;
+}
 
-  // --- Ocean (east) + sand (Coral Beach) + city ground. ---
-  const ocean = new THREE.Mesh(
-    new THREE.PlaneGeometry(900, 900),
+// Ocean (east) + sand (Coral Beach) + city ground. City ground is
+// light pavement, not asphalt: the roads are dark, the blocks between
+// them are pale concrete, so the city reads as a city instead of one
+// black expanse (the round-11 failure in the Mercado, where the ground
+// swallowed the stalls).
+function buildGround(root, textures) {
+  const ocean = groundPlane(900, 900,
     new THREE.MeshStandardMaterial({ map: textures.water, roughness: 0.25, metalness: 0.35 }),
-  );
-  ocean.rotation.x = -Math.PI / 2; ocean.position.set(420, -0.4, 0);
-  ocean.receiveShadow = true; root.add(ocean);
-
-  const sand = new THREE.Mesh(
-    new THREE.PlaneGeometry(120, 520),
+    420, 0, -0.4);
+  root.add(ocean);
+  const sand = groundPlane(120, 520,
     new THREE.MeshStandardMaterial({ map: textures.sand, roughness: 1 }),
-  );
-  sand.rotation.x = -Math.PI / 2; sand.position.set(200, 0.02, 0);
-  sand.receiveShadow = true; root.add(sand);
-
-  // City ground is light pavement, not asphalt: the roads are dark,
-  // the blocks between them are pale concrete, so the city reads as
-  // a city instead of one black expanse (the round-11 failure in the
-  // Mercado, where the ground swallowed the stalls).
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(420, 520),
+    200, 0, 0.02);
+  root.add(sand);
+  const ground = groundPlane(420, 520,
     new THREE.MeshStandardMaterial({ map: textures.sidewalk, roughness: 1 }),
-  );
-  ground.rotation.x = -Math.PI / 2; ground.position.set(-50, 0, 0);
-  ground.receiveShadow = true; root.add(ground);
+    -50, 0, 0);
+  root.add(ground);
+}
 
-  // --- Roads: the loop plus cross streets, with kerbs. ---
+// Roads: the loop plus cross streets, with kerbs.
+function buildRoads(root, textures) {
   const roadMat = new THREE.MeshStandardMaterial({ map: textures.asphalt, roughness: 0.9 });
   const roads = [
     [0, 0, 420, 14], [0, -150, 420, 12], [0, 150, 420, 12],
     [-150, 0, 14, 520], [-40, 0, 12, 520], [60, 0, 12, 520], [150, 0, 12, 520],
   ];
   for (const [x, z, w, d] of roads) {
-    const r = new THREE.Mesh(new THREE.PlaneGeometry(w, d), roadMat);
-    r.rotation.x = -Math.PI / 2; r.position.set(x, 0.06, z);
-    r.receiveShadow = true; root.add(r);
+    root.add(groundPlane(w, d, roadMat, x, z, 0.06));
   }
+}
 
-  // --- Mercado: photo-facade shopfronts in a row, awnings, stalls. ---
-  // The facade material starts untextured; applyPhotos() below swaps
-  // the real photograph in the moment it finishes loading, so the
-  // shops are never flat pink boxes in a screenshot.
+// Mercado: photo-facade shopfronts in a row, awnings, stalls.
+// The facade material starts untextured; applyPhotos() below swaps
+// the real photograph in the moment it finishes loading, so the
+// shops are never flat pink boxes in a screenshot.
+// Returns the facade materials so applyPhotos() can texture them.
+function buildMercado(root, textures, photos, rand) {
   const mercadoRow = new THREE.Group();
   const facadeMat = new THREE.MeshStandardMaterial({ color: 0xff9eb5, roughness: 0.8 });
   const facadeTargets = [];
@@ -239,8 +250,11 @@ export function buildWorld(scene, textures, photos) {
     stall.position.set(-210 + i * 26 + range(rand, -4, 4), 0, -100 + range(rand, -3, 3));
     root.add(stall);
   }
+  return facadeTargets;
+}
 
-  // --- Neon Row: glass towers with lit windows + neon signs. ---
+// Neon Row: glass towers with lit windows + neon signs.
+function buildNeonRow(root, textures, rand) {
   const towerHeights = [34, 48, 42, 58, 30, 52, 38, 46];
   towerHeights.forEach((hgt, i) => {
     const t = box(18, hgt, 18, 0xffffff, { map: textures.glass, rough: 0.35, metal: 0.4 });
@@ -254,8 +268,10 @@ export function buildWorld(scene, textures, photos) {
       root.add(sign);
     }
   });
+}
 
-  // --- Harbor: containers, cranes, warehouse. ---
+// Harbor: containers, cranes, warehouse.
+function buildHarbor(root, textures, rand) {
   const containerColors = [0xc96f2e, 0x3e6b8e, 0xb3402f, 0x4a7a3a, 0xd8c25a];
   for (let i = 0; i < 14; i++) {
     const c = box(6, 2.6, 2.6, containerColors[i % containerColors.length], { rough: 0.7, metal: 0.3 });
@@ -280,8 +296,10 @@ export function buildWorld(scene, textures, photos) {
   const warehouse = box(44, 12, 22, 0xffffff, { map: textures.brickCoral, rough: 0.9 });
   warehouse.position.set(-40, 6, 240);
   root.add(warehouse);
+}
 
-  // --- Coral Beach: palms, umbrellas, loungers, pier. ---
+// Coral Beach: palms, umbrellas, loungers, pier.
+function buildBeach(root, textures, rand) {
   for (let i = 0; i < 16; i++) {
     const palm = makePalm(textures, rand, range(rand, 5.5, 8.5));
     palm.position.set(165 + range(rand, -6, 60), 0, -240 + i * 32 + range(rand, -6, 6));
@@ -307,8 +325,10 @@ export function buildWorld(scene, textures, photos) {
     post.position.set(231, 1.6, -66 + i * 10);
     root.add(post);
   }
+}
 
-  // --- Crosswalks at the four main intersections + sidewalks. ---
+// Crosswalks at the four main intersections + sidewalks.
+function buildCrossings(root, textures) {
   const crossMat = new THREE.MeshStandardMaterial({ map: textures.crosswalk, roughness: 0.9 });
   for (const [cx, cz, rot] of [[-150, -150, 0], [-40, -150, 0], [60, 150, 0], [-150, 150, Math.PI / 2], [150, -150, Math.PI / 2]]) {
     const cw = new THREE.Mesh(new THREE.PlaneGeometry(12, 6), crossMat);
@@ -326,26 +346,36 @@ export function buildWorld(scene, textures, photos) {
     walk.receiveShadow = true;
     root.add(walk);
   }
+}
 
-  // --- Street palms + lamps along Ocean Drive and Neon Row. Palms
-  // stand on the sidewalk (x=140), not in the asphalt: in v2 a palm
-  // grew out of the middle of Ocean Drive in shot 1.
+// Street palms + lamps along Ocean Drive and Neon Row. Palms stand
+// on the sidewalk (x=140), not in the asphalt: in v2 a palm grew out
+// of the middle of Ocean Drive in shot 1.
+function buildStreetFurniture(root, textures, rand) {
   for (let i = 0; i < 12; i++) {
     const palm = makePalm(textures, rand, range(rand, 6, 8));
     palm.position.set(140, 0, -240 + i * 44);
     root.add(palm);
-    const lamp = new THREE.Group();
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 6, 6),
-      new THREE.MeshStandardMaterial({ color: 0x22262c, metalness: 0.6, roughness: 0.4 }));
-    pole.position.y = 3; lamp.add(pole);
-    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.35, 10, 8),
-      new THREE.MeshBasicMaterial({ color: 0xffe9a8 }));
-    bulb.position.y = 6.1; lamp.add(bulb);
+    const lamp = makeLamp();
     lamp.position.set(134, 0, -220 + i * 44);
     root.add(lamp);
   }
+}
 
-  // --- Highway Loop: wide asphalt ring with barriers and billboards. ---
+// One street lamp: dark pole, warm glowing bulb.
+function makeLamp() {
+  const lamp = new THREE.Group();
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 6, 6),
+    new THREE.MeshStandardMaterial({ color: 0x22262c, metalness: 0.6, roughness: 0.4 }));
+  pole.position.y = 3; lamp.add(pole);
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.35, 10, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffe9a8 }));
+  bulb.position.y = 6.1; lamp.add(bulb);
+  return lamp;
+}
+
+// Highway Loop: wide asphalt ring with barriers and billboards.
+function buildHighway(root, textures, rand) {
   for (let i = 0; i < 10; i++) {
     const barrier = box(4, 1, 0.5, i % 2 ? 0xff5a3c : 0xffffff, { rough: 0.8 });
     barrier.position.set(60 + range(rand, -30, 30), 0.5, 60 + i * 18);
@@ -355,8 +385,11 @@ export function buildWorld(scene, textures, photos) {
   billboard.position.set(60, 12, 150);
   billboard.rotation.y = Math.PI;
   root.add(billboard);
+}
 
-  // Golden-hour sun + warm ambient so nothing ever reads as night.
+// Golden-hour sun + warm ambient so nothing ever reads as night.
+// Returns the sun so the caller can keep a handle on it.
+function buildLights(scene) {
   const sun = new THREE.DirectionalLight(0xffc27a, 2.6);
   sun.position.set(180, 140, -120);
   sun.castShadow = true;
@@ -369,6 +402,26 @@ export function buildWorld(scene, textures, photos) {
   const hemi = new THREE.HemisphereLight(0xffd9a0, 0x2a4a5a, 0.7);
   scene.add(hemi);
   scene.fog = new THREE.Fog(0xffb37a, 320, 850);
+  return sun;
+}
+
+export function buildWorld(scene, textures, photos) {
+  const rand = mulberry32(1987);
+  const root = new THREE.Group();
+  root.name = 'NeonBayCity';
+  scene.add(root);
+
+  const skyMat = buildSky(root, photos);
+  buildGround(root, textures);
+  buildRoads(root, textures);
+  const facadeTargets = buildMercado(root, textures, photos, rand);
+  buildNeonRow(root, textures, rand);
+  buildHarbor(root, textures, rand);
+  buildBeach(root, textures, rand);
+  buildCrossings(root, textures);
+  buildStreetFurniture(root, textures, rand);
+  buildHighway(root, textures, rand);
+  const sun = buildLights(scene);
 
   return { root, sun, rand, skyMat, facadeTargets };
 }

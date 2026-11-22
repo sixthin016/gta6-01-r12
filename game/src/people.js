@@ -1,4 +1,5 @@
 // Neon Bay — people (game/src/people.js).
+//
 // Pedestrians are articulated low-poly figures — torso, head with hair,
 // arms, legs, and a shirt colour drawn from the city palette — walking
 // the sidewalks in small groups, never the black blocks the old build
@@ -11,6 +12,8 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { mulberry32, pick, range } from './rng.js';
 
+// The crew: fixed looks and perks. The jacket colour here is also
+// the HUD chip colour for that member (see hud.js / shots.js).
 export const CREW = [
   { id: 'dune', name: 'Dune Okafor', role: 'Driver', age: 31, jacket: 0x7a4fd0, shirt: 0xffffff, pants: 0x22262c, hair: 0x1a1210, hat: 'cap', perk: 'Drift King handling: +25% grip, NOS lasts 6 s longer' },
   { id: 'mara', name: 'Mara Ivers', role: 'Hacker', age: 26, jacket: 0x18b8b0, shirt: 0x0e2a28, pants: 0x2a2f38, hair: 0x3a1e10, hat: 'none', perk: 'Camera loop: NBPD roadblocks show on the minimap 30 s early' },
@@ -19,11 +22,14 @@ export const CREW = [
 
 export const HERO = { name: 'Rae Vega', age: 27, jacket: 0xffc21a, shirt: 0xffffff, pants: 0x1d3350, hair: 0x2a1608 };
 
+// Pedestrian palettes: shirts, pants, skins and hair drawn from the
+// city palette, so walkers match the world instead of clashing.
 const SHIRTS = [0xff5a3c, 0xffd166, 0x37c8c3, 0xff9eb5, 0xffffff, 0x3fae4a, 0x2e6fd8, 0xff8c1a];
 const PANTS = [0x22262c, 0x2a2f38, 0x3a3e46, 0x5a4632, 0x1d3350];
 const SKINS = [0xf2c9a0, 0xd9a066, 0xa0663a, 0x8a4f28, 0xf6d7b8];
 const HAIRS = [0x1a1210, 0x3a1e10, 0x000000, 0x6b4a22, 0x8a8a8a];
 
+// One box limb (arm or leg) with a shared material style.
 function limb(w, h, d, color) {
   const m = new THREE.Mesh(
     new THREE.BoxGeometry(w, h, d),
@@ -33,6 +39,9 @@ function limb(w, h, d, color) {
   return m;
 }
 
+// Build a person from a look: { jacket, shirt, pants, hair, hat }.
+// Missing fields fall back to a random palette pick, so makePerson({})
+// yields a random pedestrian while the crew and hero get fixed looks.
 export function makePerson(look, rand) {
   const g = new THREE.Group();
   const skin = new THREE.MeshStandardMaterial({ color: pick(rand, SKINS), roughness: 0.75 });
@@ -71,11 +80,17 @@ export function makePerson(look, rand) {
     cap.position.y = 1.8;
     g.add(cap);
   }
+  // Walk-cycle state, read by Crowd.update().
   g.userData.walkPhase = rand() * Math.PI * 2;
   g.userData.armL = armL; g.userData.armR = armR;
   g.userData.legL = legL; g.userData.legR = legR;
   g.userData.speed = range(rand, 0.9, 1.6);
   return g;
+}
+
+// Look up a crew definition by id ('dune' | 'mara' | 'kip').
+export function crewById(id) {
+  return CREW.find((c) => c.id === id);
 }
 
 export function makeHero() {
@@ -91,11 +106,12 @@ export function makeHero() {
 }
 
 export function makeCrewMember(id) {
-  const def = CREW.find((c) => c.id === id);
+  const def = crewById(id);
   const rand = mulberry32(100 + def.age);
   const person = makePerson(def, rand);
   person.name = def.name;
   if (id === 'mara') {
+    // Mara's laptop bag — the hacker prop.
     const laptop = limb(0.34, 0.24, 0.03, 0x22262c);
     laptop.position.set(-0.3, 1.05, 0.16);
     person.add(laptop);
@@ -112,34 +128,42 @@ export class Crowd {
     this.rand = mulberry32(555);
   }
 
+  // Sidewalk routes: axis-aligned loops the walkers pace along.
+  // Each route is a line the walker walks to the end of, then turns
+  // around and walks back.
+  static ROUTES = [
+    { x: -228, z0: -130, z1: -60, axis: 'z' },
+    { x: 138, z0: -240, z1: 240, axis: 'z' },
+    { z: -136, x0: -240, x1: 130, axis: 'x' },
+    { z: 164, x0: -240, x1: 130, axis: 'x' },
+    { x: 178, z0: -240, z1: 240, axis: 'z' },
+    { x: -120, z0: 140, z1: 240, axis: 'z' },
+    { z: 120, x0: -20, x1: 140, axis: 'x' },
+  ];
+
   spawn(count) {
-    const routes = [
-      { x: -228, z0: -130, z1: -60, axis: 'z' },
-      { x: 138, z0: -240, z1: 240, axis: 'z' },
-      { z: -136, x0: -240, x1: 130, axis: 'x' },
-      { z: 164, x0: -240, x1: 130, axis: 'x' },
-      { x: 178, z0: -240, z1: 240, axis: 'z' },
-      { x: -120, z0: 140, z1: 240, axis: 'z' },
-      { z: 120, x0: -20, x1: 140, axis: 'x' },
-    ];
+    const routes = Crowd.ROUTES;
     for (let i = 0; i < count; i++) {
       const route = routes[i % routes.length];
       const person = makePerson({}, this.rand);
-      if (route.axis === 'z') {
-        person.position.set(route.x + range(this.rand, -2, 2), 0, range(this.rand, route.z0, route.z1));
-        person.rotation.y = this.rand() < 0.5 ? 0 : Math.PI;
-      } else {
-        person.position.set(range(this.rand, route.x0, route.x1), 0, route.z + range(this.rand, -2, 2));
-        person.rotation.y = this.rand() < 0.5 ? Math.PI / 2 : -Math.PI / 2;
-      }
       person.userData.route = route;
       // Walking direction, stored once: +1 along the route axis, -1 back.
       person.userData.dir = this.rand() < 0.5 ? 1 : -1;
-      person.rotation.y = route.axis === 'z'
-        ? (person.userData.dir > 0 ? 0 : Math.PI)
-        : (person.userData.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
+      this.placeOnRoute(person, route);
       this.scene.add(person);
       this.walkers.push(person);
+    }
+  }
+
+  // Put a walker at a random spot on its route, facing its direction.
+  placeOnRoute(person, route) {
+    const dir = person.userData.dir;
+    if (route.axis === 'z') {
+      person.position.set(route.x + range(this.rand, -2, 2), 0, range(this.rand, route.z0, route.z1));
+      person.rotation.y = dir > 0 ? 0 : Math.PI;
+    } else {
+      person.position.set(range(this.rand, route.x0, route.x1), 0, route.z + range(this.rand, -2, 2));
+      person.rotation.y = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
     }
   }
 

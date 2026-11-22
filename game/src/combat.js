@@ -1,4 +1,5 @@
 // Neon Bay — combat (game/src/combat.js).
+//
 // Three weapons, one wheel, honest numbers. The player aims with the
 // mouse and clicks to fire; rivals and NBPD officers take cover behind
 // cars and walls and fight back. Ammo is shown in the HUD exactly as
@@ -8,6 +9,9 @@
 // shell, so a firefight reads as one even in a still screenshot.
 import * as THREE from '../vendor/three.module.min.js';
 
+// Fixed per-weapon numbers. `damage` is point-blank damage; distance
+// falloff (see fire()) reduces it at range. `pellets` is 1 except for
+// the shotgun, which fires a spread of 6.
 export const WEAPONS = {
   pistol: { name: 'Pistol', damage: 34, range: 42, rate: 0.22, mag: 12, reserve: 48, spread: 0.012, auto: false, color: 0xffd166 },
   smg: { name: 'SMG', damage: 18, range: 36, rate: 0.09, mag: 32, reserve: 128, spread: 0.045, auto: true, color: 0x37e6ff },
@@ -20,6 +24,14 @@ export const RIVALS = {
   count: 6,
   district: 'Mercado District',
 };
+
+// Distance falloff: a pistol loses half its damage at max range; a
+// shotgun loses two thirds. The numbers in WEAPONS are point-blank.
+function falloffFactor(weapon, dist) {
+  const loss = weapon.name === 'Shotgun' ? 0.67 : 0.5;
+  const floor = weapon.name === 'Shotgun' ? 0.33 : 0.5;
+  return Math.max(floor, 1 - (dist / weapon.range) * loss);
+}
 
 export class Combat {
   constructor(scene) {
@@ -52,6 +64,8 @@ export class Combat {
     if (WEAPONS[name]) this.weapon = name;
   }
 
+  // Move reserve ammo into the magazine. Returns rounds moved (0
+  // when the magazine is already full or the reserve is empty).
   reload() {
     const w = this.current;
     const a = this.ammo[this.weapon];
@@ -62,7 +76,8 @@ export class Combat {
     return take;
   }
 
-  // Returns the shot (or null while cooling down / empty).
+  // Fire one trigger pull. Returns the shot (or null while cooling
+  // down / empty — an empty magazine auto-reloads instead).
   fire(origin, direction, time) {
     const w = this.current;
     if (this.cooldown > 0) return null;
@@ -73,35 +88,49 @@ export class Combat {
     const pellets = w.pellets ?? 1;
     const hits = [];
     for (let p = 0; p < pellets; p++) {
-      const dir = direction.clone();
-      dir.x += (Math.random() - 0.5) * w.spread * 2;
-      dir.y += (Math.random() - 0.5) * w.spread * 2;
-      dir.normalize();
-      const end = origin.clone().add(dir.multiplyScalar(w.range));
-      const tracer = new THREE.Mesh(
-        new THREE.BoxGeometry(0.05, 0.05, w.range),
-        new THREE.MeshBasicMaterial({ color: w.color, transparent: true, opacity: 0.9 }),
-      );
-      tracer.position.copy(origin).add(dir.clone().multiplyScalar(w.range / 2));
-      tracer.lookAt(end);
-      this.scene.add(tracer);
-      this.tracers.push({ mesh: tracer, born: time });
-      // Hit test against registered targets, with distance falloff:
-      // a pistol loses half its damage at max range; a shotgun loses
-      // two thirds. The numbers in WEAPONS are point-blank damage.
-      for (const t of this.targets) {
-        const dist = t.position.distanceTo(origin);
-        if (dist < w.range + 4) {
-          const toTarget = t.position.clone().sub(origin).normalize();
-          if (toTarget.angleTo(direction) < 0.12) {
-            const falloff = w.name === 'Shotgun' ? Math.max(0.33, 1 - (dist / w.range) * 0.67)
-              : Math.max(0.5, 1 - (dist / w.range) * 0.5);
-            hits.push({ target: t, damage: Math.round(w.damage * falloff) });
-          }
-        }
-      }
+      const dir = this.jitteredDirection(direction, w.spread);
+      this.spawnTracer(origin, dir, w, time);
+      hits.push(...this.hitTest(origin, direction, dir, w));
     }
     return { weapon: this.weapon, pellets, hits, at: time };
+  }
+
+  // One pellet's direction: the aim direction plus a random spread
+  // jitter on X and Y, re-normalised.
+  jitteredDirection(direction, spread) {
+    const dir = direction.clone();
+    dir.x += (Math.random() - 0.5) * spread * 2;
+    dir.y += (Math.random() - 0.5) * spread * 2;
+    dir.normalize();
+    return dir;
+  }
+
+  // A glowing tracer line from the muzzle to max range, fading out
+  // over 0.15 s (cleaned up in update()).
+  spawnTracer(origin, dir, weapon, time) {
+    const end = origin.clone().add(dir.clone().multiplyScalar(weapon.range));
+    const tracer = new THREE.Mesh(
+      new THREE.BoxGeometry(0.05, 0.05, weapon.range),
+      new THREE.MeshBasicMaterial({ color: weapon.color, transparent: true, opacity: 0.9 }),
+    );
+    tracer.position.copy(origin).add(dir.clone().multiplyScalar(weapon.range / 2));
+    tracer.lookAt(end);
+    this.scene.add(tracer);
+    this.tracers.push({ mesh: tracer, born: time });
+  }
+
+  // Hit test for one pellet against every registered target: in range
+  // and within a narrow cone of the aim direction.
+  hitTest(origin, aimDir, pelletDir, weapon) {
+    const hits = [];
+    for (const t of this.targets) {
+      const dist = t.position.distanceTo(origin);
+      if (dist >= weapon.range + 4) continue;
+      const toTarget = t.position.clone().sub(origin).normalize();
+      if (toTarget.angleTo(aimDir) >= 0.12) continue;
+      hits.push({ target: t, damage: Math.round(weapon.damage * falloffFactor(weapon, dist)) });
+    }
+    return hits;
   }
 
   addTarget(mesh, hp = 100) {
@@ -110,6 +139,7 @@ export class Combat {
     return mesh;
   }
 
+  // Apply damage to a target; returns true when it goes down.
   damage(target, amount) {
     target.userData.hp -= amount;
     return target.userData.hp <= 0;

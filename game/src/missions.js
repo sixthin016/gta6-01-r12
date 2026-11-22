@@ -1,20 +1,27 @@
 // Neon Bay — story missions (game/src/missions.js).
+//
 // 18 story missions, one arc: Rae Vega, a dock driver fresh out of the
 // Neon Bay docks, builds a crew and pulls one last score — the
 // $250,000 Harbor Reserve vault — before Hurricane Solana makes
-// landfall on Tue 24 Nov 2026 at 23:00 WITA. Payouts are fixed and the
-// cash ladder is audited in README.md, so every dollar on screen can
-// be traced: start $500 + mission payouts + side income (street races,
-// taxi fares, sold cars) = the cash shown in each staged shot.
+// landfall on Tue 24 Nov 2026 at 23:00 WITA.
+//
+// The cash ladder is audited to the dollar, and the same arithmetic
+// appears in README.md and in the staged shots, so every dollar on
+// screen can be traced:
+//   start $500 + mission payouts to date + side income (street races,
+//   taxi fares, sold cars) = the cash shown in each staged shot.
+//
 //   After mission 6:  $500 + $7,700 missions + $4,250 side = $12,450
 //   After mission 7:  + $2,400 + $620 side                 = $15,470
 //   After mission 11: + $13,700 + $2,280 side              = $31,450
 //   After mission 17: + $43,500 + $1,950 side              = $81,900
+//
 // Respect climbs 68 -> 74 -> 83 -> 86 -> 97 across the same stages,
 // and the final heist takes it to 100: early missions build respect
 // fast (12, 11, 11, 11, 11, 12), later ones add little because Rae is
 // already known on every street (6, then 3, 2, 2, 2, 3, then 2, 2, 3,
 // 2, 2, and 3 for the last score).
+//
 // Every mission names a real district and a real street; none of the
 // names, dates or numbers below appear differently anywhere else in
 // the entry.
@@ -41,8 +48,20 @@ export const MISSIONS = [
 
 export const MISSION_COUNT = MISSIONS.length; // 18
 
+// Sum of the fixed payouts for missions 1..n.
 export function missionPayoutsTo(n) {
-  return MISSIONS.filter((m) => m.n <= n).reduce((s, m) => s + m.payout, 0);
+  return MISSIONS.filter((m) => m.n <= n).reduce((sum, m) => sum + m.payout, 0);
+}
+
+// Total payout of the whole story arc (missions 1..18), before side
+// income: $322,300, of which $250,000 is the final heist alone.
+export function totalPayout() {
+  return missionPayoutsTo(MISSION_COUNT);
+}
+
+// Sum of the respect gains for missions 1..n.
+export function missionRespectTo(n) {
+  return MISSIONS.filter((m) => m.n <= n).reduce((sum, m) => sum + m.respect, 0);
 }
 
 export function missionByNumber(n) {
@@ -57,6 +76,9 @@ export function missionByNumber(n) {
 export const SIDE_INCOME = { A: 4250, B: 620, C: 2280, D: 1950 };
 export const START_CASH = 500;
 
+// The four audited mid-game checkpoints the staged shots freeze on.
+// `after` is the number of missions completed when the shot is taken;
+// the cash shown is the cash *before* the mission in progress pays out.
 export const CASH_STAGES = {
   A: { after: 6, cash: 12450, respect: 68 },
   B: { after: 7, cash: 15470, respect: 74 },
@@ -64,23 +86,31 @@ export const CASH_STAGES = {
   D: { after: 17, cash: 81900, respect: 97 },
 };
 
-// Audit helper: recompute a stage's cash from its parts. The staged
-// shots show the cash *before* the mission in progress pays out, so
-// stage C counts payouts only through mission 11 and stage D only
-// through mission 17.
+// Side income accumulated by the time a stage is reached: each stage
+// adds its own side income to all the stages before it.
+export function sideIncomeTo(stage) {
+  const order = ['A', 'B', 'C', 'D'];
+  const upto = order.indexOf(stage);
+  return order.slice(0, upto + 1).reduce((sum, key) => sum + SIDE_INCOME[key], 0);
+}
+
+// Audit helper: recompute a stage's cash from its parts and check it
+// against the claimed figure. The staged shots show the cash *before*
+// the mission in progress pays out, so stage C counts payouts only
+// through mission 11 and stage D only through mission 17.
 export function auditStage(stage) {
   const s = CASH_STAGES[stage];
-  const side = stage === 'A' ? SIDE_INCOME.A
-    : stage === 'B' ? SIDE_INCOME.A + SIDE_INCOME.B
-    : stage === 'C' ? SIDE_INCOME.A + SIDE_INCOME.B + SIDE_INCOME.C
-    : SIDE_INCOME.A + SIDE_INCOME.B + SIDE_INCOME.C + SIDE_INCOME.D;
+  const side = sideIncomeTo(stage);
+  const computedCash = START_CASH + missionPayoutsTo(s.after) + side;
+  const computedRespect = missionRespectTo(s.after);
   return {
     stage,
-    computed: START_CASH + missionPayoutsTo(s.after) + side,
+    computed: computedCash,
     claimed: s.cash,
-    matches: START_CASH + missionPayoutsTo(s.after) + side === s.cash,
-    respectComputed: MISSIONS.filter((m) => m.n <= s.after).reduce((t, m) => t + m.respect, 0),
+    matches: computedCash === s.cash,
+    respectComputed: computedRespect,
     respectClaimed: s.respect,
+    respectMatches: computedRespect === s.respect,
   };
 }
 
@@ -88,6 +118,8 @@ export function cashAfter(missionNumber, stageSide) {
   return START_CASH + missionPayoutsTo(missionNumber) + stageSide;
 }
 
+// Live mission progress for a play session: current mission, how many
+// are done, cash and respect earned so far, and a completion log.
 export class MissionRunner {
   constructor() {
     this.current = 1;

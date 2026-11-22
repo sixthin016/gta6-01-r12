@@ -1,4 +1,5 @@
 // Neon Bay — HUD (game/src/hud.js).
+//
 // The HUD is the game's second screenshot: wanted stars, cash, health,
 // the Hurricane Solana countdown, the district name, the mission
 // objective, the radio station, crew portraits as coloured initials,
@@ -10,6 +11,8 @@
 // in; this file never invents its own.
 import { MISSIONS } from './missions.js';
 
+// One-line flavour for each district, shown as a tooltip on the
+// district chip.
 export const DISTRICT_BLURBS = {
   'Coral Beach': 'Ocean Drive — surf, palms, 17:42 sun',
   'Mercado District': 'Mercado Lane — stalls, neon, crowds',
@@ -18,6 +21,8 @@ export const DISTRICT_BLURBS = {
   'Highway Loop': 'Highway Loop — 155 km/h, no exits',
 };
 
+// Wanted stars as text: filled stars for the level, hollow for the
+// rest (always five slots, so the chip never changes width).
 export function starString(wanted) {
   return '★'.repeat(wanted) + '☆'.repeat(Math.max(0, 5 - wanted));
 }
@@ -25,6 +30,13 @@ export function starString(wanted) {
 export function fmtCash(n) {
   return '$' + n.toLocaleString('en-US');
 }
+
+// Feed lines are kept to four at a time; in staged-shot mode they
+// never fade, because the capture tool's virtual clock would
+// otherwise age them out before the screenshot is taken.
+const FEED_MAX_ITEMS = 4;
+const FEED_FADE_MS = 5200;
+const FEED_REMOVE_MS = 6000;
 
 export class Hud {
   constructor(doc) {
@@ -55,21 +67,15 @@ export class Hud {
     this.doc.getElementById('hud').classList.remove('hidden');
   }
 
+  // Set every HUD field from one state object:
+  // { wanted, cash, respect, completed, total, hp, clock, district,
+  //   mission, objective, speed, weapon, ammo, radio, crew }
   setState(s) {
-    // s: { wanted, cash, respect, completed, total, hp, clock, district,
-    //   mission, objective, speed, weapon, ammo, radio, crew }
-    if (this.el.stars) {
-      this.el.stars.textContent = starString(s.wanted);
-      this.el.stars.classList.toggle('hot', s.wanted >= 4);
-    }
+    this.setWanted(s.wanted);
     if (this.el.cash) this.el.cash.textContent = fmtCash(s.cash);
     if (this.el.respect) this.el.respect.textContent = `Respect ${s.respect} · Crew 3/3`;
     if (this.el.missions) this.el.missions.textContent = `Missions ${s.completed}/${s.total}`;
-    if (this.el.healthFill) {
-      this.el.healthFill.style.width = `${s.hp}%`;
-      this.el.healthFill.classList.toggle('low', s.hp < 35);
-    }
-    if (this.el.healthText) this.el.healthText.textContent = `${s.hp} HP`;
+    this.setHealth(s.hp);
     if (this.el.clock) this.el.clock.textContent = s.clock;
     if (this.el.district) {
       this.el.district.textContent = s.district;
@@ -80,9 +86,27 @@ export class Hud {
     if (this.el.speed) this.el.speed.textContent = s.driving ? `${Math.round(s.speed)} mph` : '';
     if (this.el.ammo) this.el.ammo.textContent = `${s.weapon} ${s.ammo}`;
     if (this.el.radio) this.el.radio.textContent = s.radio;
-    if (this.el.crew) {
-      this.el.crew.innerHTML = s.crew.map((c) => `<span class="crew-chip" style="--c:${c.color}">${c.initials} ${c.name}</span>`).join('');
+    this.setCrew(s.crew);
+  }
+
+  // Crew chips: one coloured chip per member, initials + first name.
+  setCrew(crew) {
+    if (!this.el.crew) return;
+    this.el.crew.innerHTML = crew.map((c) => `<span class="crew-chip" style="--c:${c.color}">${c.initials} ${c.name}</span>`).join('');
+  }
+
+  setWanted(wanted) {
+    if (!this.el.stars) return;
+    this.el.stars.textContent = starString(wanted);
+    this.el.stars.classList.toggle('hot', wanted >= 4);
+  }
+
+  setHealth(hp) {
+    if (this.el.healthFill) {
+      this.el.healthFill.style.width = `${hp}%`;
+      this.el.healthFill.classList.toggle('low', hp < 35);
     }
+    if (this.el.healthText) this.el.healthText.textContent = `${hp} HP`;
   }
 
   pushFeed(text) {
@@ -92,7 +116,7 @@ export class Hud {
     div.textContent = text;
     this.el.feed.prepend(div);
     this.feedItems.unshift(div);
-    while (this.feedItems.length > 4) {
+    while (this.feedItems.length > FEED_MAX_ITEMS) {
       const old = this.feedItems.pop();
       old.remove();
     }
@@ -100,8 +124,8 @@ export class Hud {
     // virtual clock would otherwise age the lines out before the
     // screenshot is taken.
     if (this.shotMode) return;
-    setTimeout(() => div.classList.add('fade'), 5200);
-    setTimeout(() => { div.remove(); this.feedItems = this.feedItems.filter((d) => d !== div); }, 6000);
+    setTimeout(() => div.classList.add('fade'), FEED_FADE_MS);
+    setTimeout(() => { div.remove(); this.feedItems = this.feedItems.filter((d) => d !== div); }, FEED_REMOVE_MS);
   }
 
   // Round minimap: sand east, roads, traffic dots, police (blue-red),
@@ -118,7 +142,15 @@ export class Hud {
     ctx.beginPath(); ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2); ctx.fill();
     ctx.save();
     ctx.beginPath(); ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2); ctx.clip();
-    // Sand strip (east edge) + ocean.
+    this.drawMinimapGround(ctx, scale, size);
+    this.drawMinimapObjective(ctx, toMap, objective);
+    this.drawMinimapActors(ctx, toMap, traffic, cruisers, player);
+    ctx.restore();
+  }
+
+  // Sand strip (east edge) + ocean, filled roads, and lane dashes
+  // down Ocean Drive.
+  drawMinimapGround(ctx, scale, size) {
     ctx.fillStyle = '#e8c98f';
     ctx.fillRect(size / 2 + 150 * scale, 0, 90 * scale, size);
     ctx.fillStyle = '#14919b';
@@ -136,15 +168,19 @@ export class Hud {
     for (let z = -260; z < 260; z += 24) {
       ctx.fillRect(size / 2 + (150 + 50) * scale - 1, size / 2 + z * scale, 2, 10 * scale);
     }
-    // Objective star.
-    if (objective) {
-      const [ox, oy] = toMap(objective.x, objective.z);
-      ctx.fillStyle = '#ffd166';
-      ctx.beginPath(); ctx.arc(ox, oy, 6, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
-      ctx.beginPath(); ctx.arc(ox, oy, 9, 0, Math.PI * 2); ctx.stroke();
-    }
-    // Traffic (white), police (flashing blue/red), player (yellow).
+  }
+
+  drawMinimapObjective(ctx, toMap, objective) {
+    if (!objective) return;
+    const [ox, oy] = toMap(objective.x, objective.z);
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath(); ctx.arc(ox, oy, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(ox, oy, 9, 0, Math.PI * 2); ctx.stroke();
+  }
+
+  // Traffic (white), police (flashing blue/red), player (yellow).
+  drawMinimapActors(ctx, toMap, traffic, cruisers, player) {
     ctx.fillStyle = '#ffffff';
     for (const c of traffic) {
       const [x, y] = toMap(c.position.x, c.position.z);
@@ -162,7 +198,6 @@ export class Hud {
     ctx.arc(px, py, 5, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(px, py, 7.5, 0, Math.PI * 2); ctx.stroke();
-    ctx.restore();
   }
 
   missionTitle(n) {

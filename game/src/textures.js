@@ -1,4 +1,5 @@
 // Neon Bay — textures (game/src/textures.js).
+//
 // Two kinds of art live in this game. The photographic kind was made
 // outside the program and ships as files: game/assets/sky.jpg (a real
 // golden-hour photograph over the bay, 1600x900) and
@@ -10,9 +11,14 @@
 // fronds, and the ocean. Together they keep any single frame from ever
 // looking like flat coloured boxes — the exact failure the round-6
 // diagnosis found in the old build.
+//
+// Every procedural texture is painted from its own fixed seed, so the
+// same texture is produced on every machine and every run.
 import * as THREE from '../vendor/three.module.min.js';
 import { mulberry32, range } from './rng.js';
 
+// Paint on an offscreen canvas and wrap it as a repeating sRGB
+// texture. `paint` receives (ctx, width, height).
 function canvasTexture(w, h, paint, repeatX = 1, repeatY = 1) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
@@ -26,6 +32,8 @@ function canvasTexture(w, h, paint, repeatX = 1, repeatY = 1) {
   return t;
 }
 
+// Scatter n small semi-transparent squares of the given colours —
+// the grain that keeps a flat fill from reading as a flat fill.
 function speckle(ctx, w, h, rand, n, colors, sizeMax = 2) {
   for (let i = 0; i < n; i++) {
     ctx.fillStyle = colors[Math.floor(rand() * colors.length)];
@@ -34,6 +42,15 @@ function speckle(ctx, w, h, rand, n, colors, sizeMax = 2) {
     ctx.fillRect(rand() * w, rand() * h, s, s);
   }
   ctx.globalAlpha = 1;
+}
+
+// Scale a hex colour by a brightness factor (for brick shading).
+export function shadeColor(hex, f) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = Math.min(255, Math.round(((n >> 16) & 255) * f));
+  const g = Math.min(255, Math.round(((n >> 8) & 255) * f));
+  const b = Math.min(255, Math.round((n & 255) * f));
+  return `rgb(${r},${g},${b})`;
 }
 
 export function makeAsphalt() {
@@ -82,14 +99,6 @@ export function makeBrick(base, mortar) {
       }
     }
   }, 2, 2);
-}
-
-export function shadeColor(hex, f) {
-  const n = parseInt(hex.slice(1), 16);
-  const r = Math.min(255, Math.round(((n >> 16) & 255) * f));
-  const g = Math.min(255, Math.round(((n >> 8) & 255) * f));
-  const b = Math.min(255, Math.round((n & 255) * f));
-  return `rgb(${r},${g},${b})`;
 }
 
 // A glass tower face: deep blue glass, mullion grid, and a scatter of
@@ -169,19 +178,6 @@ export function makePalmBark() {
   }, 1, 1);
 }
 
-// Load the two photographic textures. They resolve asynchronously; the
-// world builder falls back to procedural colours until they arrive, and
-// the staged shots wait for them (shots.js gates on window.__NEONBAY__
-// photoReady) so no screenshot is ever taken with a missing sky.
-export function loadPhotos(loader) {
-  const out = { sky: null, facades: null, done: false };
-  let pending = 2;
-  const finish = () => { pending -= 1; if (pending <= 0) out.done = true; };
-  loader.load('assets/sky.jpg', (t) => { t.colorSpace = THREE.SRGBColorSpace; out.sky = t; finish(); }, undefined, finish);
-  loader.load('assets/facades.jpg', (t) => { t.colorSpace = THREE.SRGBColorSpace; out.facades = t; finish(); }, undefined, finish);
-  return out;
-}
-
 export function makeCrosswalk() {
   return canvasTexture(256, 128, (ctx, w, h) => {
     ctx.fillStyle = '#2e3138'; ctx.fillRect(0, 0, w, h);
@@ -195,13 +191,34 @@ export function makeSidewalk() {
   return canvasTexture(256, 256, (ctx, w, h) => {
     const rand = mulberry32(97);
     ctx.fillStyle = '#b9b3a4'; ctx.fillRect(0, 0, w, h);
-    ctx.strokeStyle = 'rgba(90,85,70,0.7)'; ctx.lineWidth = 2;
-    for (let x = 0; x <= w; x += 64) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
-    for (let y = 0; y <= h; y += 64) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+    gridLines(ctx, w, h, 64, 'rgba(90,85,70,0.7)', 2);
     speckle(ctx, w, h, rand, 900, ['#c8c2b2', '#a39d8c', '#8f8878'], 1.8);
   }, 4, 4);
 }
 
+// Expansion joints: a square grid of lines over a pavement texture.
+function gridLines(ctx, w, h, step, color, width = 2) {
+  ctx.strokeStyle = color; ctx.lineWidth = width;
+  for (let x = 0; x <= w; x += step) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+  for (let y = 0; y <= h; y += step) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+}
+
+// Load the two photographic textures. They resolve asynchronously; the
+// world builder falls back to procedural colours until they arrive, and
+// the staged shots wait for them (shots.js gates on window.__NEONBAY__
+// photoReady) so no screenshot is ever taken with a missing sky.
+export function loadPhotos(loader) {
+  const out = { sky: null, facades: null, done: false };
+  let pending = 2;
+  const finish = () => { pending -= 1; if (pending <= 0) out.done = true; };
+  const onPhoto = (key) => (t) => { t.colorSpace = THREE.SRGBColorSpace; out[key] = t; finish(); };
+  loader.load('assets/sky.jpg', onPhoto('sky'), undefined, finish);
+  loader.load('assets/facades.jpg', onPhoto('facades'), undefined, finish);
+  return out;
+}
+
+// The full procedural set, painted once at boot and shared by the
+// whole city.
 export function buildTextureSet() {
   return {
     asphalt: makeAsphalt(),

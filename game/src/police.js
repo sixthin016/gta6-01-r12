@@ -1,4 +1,5 @@
 // Neon Bay — the NBPD (game/src/police.js).
+//
 // The Neon Bay Police Department is a real system, not a star counter:
 // cruisers spawn at the map edge, chase and ram, and at 3 stars they
 // set roadblocks across the road ahead; at 4 stars Air One — a full
@@ -11,6 +12,8 @@ import * as THREE from '../vendor/three.module.min.js';
 import { mulberry32, range } from './rng.js';
 import { makeCar } from './vehicles.js';
 
+// What each wanted level fields. `cruisers` is the standing fleet;
+// roadblocks, the helicopter and the SWAT van are added on top.
 export const WANTED = {
   1: { cruisers: 1, roadblock: false, heli: false, label: 'NBPD responding' },
   2: { cruisers: 2, roadblock: false, heli: false, label: 'NBPD pursuit' },
@@ -19,27 +22,33 @@ export const WANTED = {
   5: { cruisers: 5, roadblock: true, heli: true, label: 'SWAT on scene' },
 };
 
+const CRUISER_SPEC = { name: 'NBPD Cruiser', color: 0x14213d, plate: 'NBPD-07', kind: 'sedan', topSpeed: 150 };
+
+// A standard NBPD cruiser: dark body, white doors, red/blue light bar.
+// The two light-bar halves are kept on userData so update() can flash
+// them in alternation.
 export function makeCruiser() {
-  const spec = { name: 'NBPD Cruiser', color: 0x14213d, plate: 'NBPD-07', kind: 'sedan', topSpeed: 150 };
-  const car = makeCar(spec);
-  // White doors + light bar + NBPD door badge.
+  const car = makeCar(CRUISER_SPEC);
   const doorMat = new THREE.MeshStandardMaterial({ color: 0xf2f2f2, roughness: 0.4, metalness: 0.3 });
   for (const sx of [-1.01, 1.01]) {
     const door = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.5, 1.6), doorMat);
     door.position.set(sx, 0.62, 0);
     car.add(door);
   }
-  const barMat = new THREE.MeshStandardMaterial({ color: 0xff2a2a, emissive: 0xff2a2a, emissiveIntensity: 2 });
-  const barMatB = new THREE.MeshStandardMaterial({ color: 0x2a6bff, emissive: 0x2a6bff, emissiveIntensity: 2 });
-  const barL = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.3), barMat);
+  const barRed = new THREE.MeshStandardMaterial({ color: 0xff2a2a, emissive: 0xff2a2a, emissiveIntensity: 2 });
+  const barBlue = new THREE.MeshStandardMaterial({ color: 0x2a6bff, emissive: 0x2a6bff, emissiveIntensity: 2 });
+  const barL = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.3), barRed);
   barL.position.set(-0.4, 1.42, 0);
-  const barR = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.3), barMatB);
+  const barR = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.12, 0.3), barBlue);
   barR.position.set(0.4, 1.42, 0);
   car.add(barL, barR);
   car.userData.lightL = barL; car.userData.lightR = barR;
   return car;
 }
 
+// Air One: the NBPD helicopter. Body, glass nose, tail and fin, skids,
+// a two-blade main rotor (spun in update()), and a real searchlight
+// cone — a translucent mesh plus a SpotLight aimed at the player.
 export function makeHelicopter() {
   const g = new THREE.Group();
   g.name = 'Air One';
@@ -60,9 +69,9 @@ export function makeHelicopter() {
   const fin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.2, 0.9), bodyMat);
   fin.position.set(0, 1.1, -5.4);
   g.add(fin);
-  const skids = new THREE.MeshStandardMaterial({ color: 0x22262c, metalness: 0.7, roughness: 0.4 });
+  const skidMat = new THREE.MeshStandardMaterial({ color: 0x22262c, metalness: 0.7, roughness: 0.4 });
   for (const sx of [-1.1, 1.1]) {
-    const skid = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.4, 6), skids);
+    const skid = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 3.4, 6), skidMat);
     skid.rotation.x = Math.PI / 2;
     skid.position.set(sx, -1.25, 0.4);
     g.add(skid);
@@ -97,6 +106,8 @@ export function makeHelicopter() {
   return g;
 }
 
+// The SWAT van: 5-star only. It blocks the road ahead and holds
+// position instead of chasing, so the player must go around it.
 export function makeSwatVan() {
   const g = new THREE.Group();
   g.name = 'NBPD SWAT Van';
@@ -122,6 +133,8 @@ export function makeSwatVan() {
   return g;
 }
 
+// A roadblock: three cruisers parked across the road plus two
+// striped barriers at the edges.
 export function makeRoadblock() {
   const g = new THREE.Group();
   g.name = 'NBPD Roadblock';
@@ -140,6 +153,9 @@ export function makeRoadblock() {
   return g;
 }
 
+// Cool-down: standing still and unseen drops one star per 12 s.
+const COOL_DOWN_SECONDS = 12;
+
 export class Police {
   constructor(scene) {
     this.scene = scene;
@@ -153,6 +169,8 @@ export class Police {
     this.lastSeen = 0;
   }
 
+  // Set the wanted level and field (or stand down) the matching
+  // units. New cruisers spawn in a ring 60 m out from the player.
   setWanted(level, playerPos) {
     this.wanted = Math.max(0, Math.min(5, level));
     const want = WANTED[this.wanted] || { cruisers: 0, roadblock: false, heli: false };
@@ -167,6 +185,13 @@ export class Police {
       const c = this.cruisers.pop();
       this.scene.remove(c);
     }
+    this.syncHeli(want, playerPos);
+    this.syncRoadblock(want, playerPos);
+    this.syncSwat(playerPos);
+    this.coolTimer = 0;
+  }
+
+  syncHeli(want, playerPos) {
     if (want.heli && !this.heli) {
       this.heli = makeHelicopter();
       this.heli.position.set(playerPos.x + 20, 42, playerPos.z - 30);
@@ -176,6 +201,9 @@ export class Police {
       this.scene.remove(this.heli);
       this.heli = null;
     }
+  }
+
+  syncRoadblock(want, playerPos) {
     if (want.roadblock && !this.roadblock) {
       this.roadblock = makeRoadblock();
       this.roadblock.position.set(playerPos.x + 40, 0, playerPos.z);
@@ -185,8 +213,11 @@ export class Police {
       this.scene.remove(this.roadblock);
       this.roadblock = null;
     }
-    // 5 stars brings the SWAT van: it blocks the road ahead and holds
-    // position instead of chasing, so the player must go around it.
+  }
+
+  // 5 stars brings the SWAT van: it blocks the road ahead and holds
+  // position instead of chasing, so the player must go around it.
+  syncSwat(playerPos) {
     if (this.wanted >= 5 && !this.swat) {
       this.swat = makeSwatVan();
       this.swat.position.set(playerPos.x + 26, 0, playerPos.z + 12);
@@ -197,23 +228,26 @@ export class Police {
       this.scene.remove(this.swat);
       this.swat = null;
     }
-    this.coolTimer = 0;
+  }
+
+  // Turn a unit toward a heading, at most 1.6 rad/s, taking the
+  // shortest way around the circle.
+  steerToward(unit, targetAngle, dt) {
+    let da = targetAngle - unit.rotation.y;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    unit.rotation.y += Math.max(-1.6 * dt, Math.min(1.6 * dt, da));
   }
 
   update(dt, time, playerPos, playerSpeed) {
     const flash = Math.sin(time * 9) > 0;
     for (const c of this.cruisers) {
+      // Alternating light bar: red on, blue on, red on...
       c.userData.lightL.material.emissiveIntensity = flash ? 2.4 : 0.4;
       c.userData.lightR.material.emissiveIntensity = flash ? 0.4 : 2.4;
       // Chase: steer toward the player, ram speed scales with wanted.
-      const dx = playerPos.x - c.position.x;
-      const dz = playerPos.z - c.position.z;
-      const dist = Math.hypot(dx, dz) || 1;
-      const targetAngle = Math.atan2(dx, dz);
-      let da = targetAngle - c.rotation.y;
-      while (da > Math.PI) da -= Math.PI * 2;
-      while (da < -Math.PI) da += Math.PI * 2;
-      c.rotation.y += Math.max(-1.6 * dt, Math.min(1.6 * dt, da));
+      const targetAngle = Math.atan2(playerPos.x - c.position.x, playerPos.z - c.position.z);
+      this.steerToward(c, targetAngle, dt);
       const speed = Math.min(34, 16 + this.wanted * 3.5);
       c.position.x += Math.sin(c.rotation.y) * speed * dt;
       c.position.z += Math.cos(c.rotation.y) * speed * dt;
@@ -229,7 +263,7 @@ export class Police {
     // Cool-down: standing still and unseen drops one star per 12 s.
     if (this.wanted > 0 && playerSpeed < 2) {
       this.coolTimer += dt;
-      if (this.coolTimer > 12) this.setWanted(this.wanted - 1, playerPos);
+      if (this.coolTimer > COOL_DOWN_SECONDS) this.setWanted(this.wanted - 1, playerPos);
     } else {
       this.coolTimer = 0;
     }

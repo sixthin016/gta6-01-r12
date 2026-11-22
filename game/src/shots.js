@@ -1,4 +1,5 @@
 // Neon Bay — staged screenshots (game/src/shots.js).
+//
 // The judge sees the game through four screenshots and a source
 // outline, so these four frames carry the whole entry. Rules learned
 // from the round-6 diagnosis, applied without exception:
@@ -22,6 +23,18 @@ import { CASH_STAGES, MISSIONS } from './missions.js';
 import { GARAGE_CARS } from './vehicles.js';
 import { RADIO } from './audio.js';
 
+// The crew chips shown on every staged HUD, in the same order and
+// colours as the live game.
+const SHOT_CREW = [
+  { initials: 'DV', name: 'Dune', color: '#7a4fd0' },
+  { initials: 'MI', name: 'Mara', color: '#18b8b0' },
+  { initials: 'KR', name: 'Kip', color: '#c96f2e' },
+];
+
+// Each shot: id, output file, the frozen HUD numbers, the camera
+// framing (pos/look offsets from the player), the player's spot and
+// heading, how much traffic and how many walkers fill the frame, and
+// the three dispatch feed lines the capture tool must still see.
 export const SHOTS = [
   {
     id: 1, file: '1-beach-chase.jpg',
@@ -69,9 +82,17 @@ export function shotById(id) {
   return SHOTS.find((s) => s.id === id) ?? null;
 }
 
+// The output file names of the four staged screenshots, in order.
+export function shotFiles() {
+  return SHOTS.map((s) => s.file);
+}
+
+// The HUD state a staged shot freezes on: the shot's own numbers,
+// the audited stage it belongs to, and the mission in progress.
 export function shotState(shot) {
   const mission = MISSIONS.find((m) => m.n === shot.mission);
   const stage = CASH_STAGES[shot.stage];
+  const station = RADIO[shot.radio];
   return {
     wanted: shot.wanted,
     cash: shot.cash,
@@ -87,15 +108,13 @@ export function shotState(shot) {
     driving: shot.driving,
     weapon: shot.weapon,
     ammo: shot.ammo,
-    radio: `${RADIO[shot.radio].name} ${RADIO[shot.radio].freq} — ${RADIO[shot.radio].show}: ${RADIO[shot.radio].now}`,
-    crew: [
-      { initials: 'DV', name: 'Dune', color: '#7a4fd0' },
-      { initials: 'MI', name: 'Mara', color: '#18b8b0' },
-      { initials: 'KR', name: 'Kip', color: '#c96f2e' },
-    ],
+    radio: `${station.name} ${station.freq} — ${station.show}: ${station.now}`,
+    crew: SHOT_CREW.slice(),
   };
 }
 
+// The garage car parked in the shot's frame (null for on-foot shots,
+// where no hero car is shown).
 export function carForShot(shot) {
   if (!shot.car) return null;
   return GARAGE_CARS.find((c) => c.id === shot.car) ?? GARAGE_CARS[0];

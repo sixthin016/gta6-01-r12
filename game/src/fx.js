@@ -1,4 +1,5 @@
 // Neon Bay — effects (game/src/fx.js).
+//
 // Juice that reads in a still frame: tyre smoke, muzzle flashes,
 // sparks, NOS flames, rain streaks as the hurricane closes in, and a
 // storm-darkening pass that rolls across the bay in the final mission.
@@ -7,6 +8,8 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { mulberry32, range } from './rng.js';
 
+// Pooled billboard particles: a fixed pool of quads, recycled
+// round-robin, so bursts never allocate geometry or materials.
 export class Particles {
   constructor(scene, max = 420) {
     this.scene = scene;
@@ -33,7 +36,11 @@ export class Particles {
     p.mesh.material.color.set(opts.color ?? 0xffffff);
     p.mesh.material.opacity = opts.opacity ?? 0.9;
     p.mesh.scale.setScalar(opts.size ?? 0.5);
-    p.vel.set(range(Math.random, -1, 1) * (opts.spread ?? 2), range(Math.random, 0, 1) * (opts.up ?? 2), range(Math.random, -1, 1) * (opts.spread ?? 2));
+    p.vel.set(
+      range(Math.random, -1, 1) * (opts.spread ?? 2),
+      range(Math.random, 0, 1) * (opts.up ?? 2),
+      range(Math.random, -1, 1) * (opts.spread ?? 2),
+    );
     p.life = 0;
     p.maxLife = opts.life ?? 0.8;
     p.grow = opts.grow ?? 0.5;
@@ -42,6 +49,11 @@ export class Particles {
 
   burst(pos, n, opts = {}) {
     for (let i = 0; i < n; i++) this.spawn(pos, opts);
+  }
+
+  // Hide every live particle at once (used when resetting a scene).
+  clear() {
+    for (const p of this.pool) p.mesh.visible = false;
   }
 
   update(dt, camera) {
@@ -68,6 +80,8 @@ export function explode(particles, shake, pos, big = false) {
   shake.add(big ? 0.9 : 0.5);
 }
 
+// The flash at the muzzle when the player fires: a bright core with a
+// warm halo, shown for ~60 ms by main.js and hidden again.
 export function makeMuzzleFlash() {
   const g = new THREE.Group();
   const core = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6),
@@ -117,13 +131,16 @@ export class Rain {
       pos.setY(i, y);
     }
     pos.needsUpdate = true;
+    // The cloud follows the player, so rain is always overhead.
     this.points.position.x = center.x;
     this.points.position.z = center.z;
   }
 }
 
 // Screen shake: small trauma-based shake for explosions, collisions
-// and the final heist blast.
+// and the final heist blast. Trauma decays linearly; the offset it
+// produces scales with trauma squared, so small hits barely move the
+// camera and big ones really kick it.
 export class Shake {
   constructor() { this.trauma = 0; }
   add(v) { this.trauma = Math.min(1, this.trauma + v); }

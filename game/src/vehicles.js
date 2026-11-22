@@ -1,4 +1,5 @@
 // Neon Bay — vehicles (game/src/vehicles.js).
+//
 // Cars are built from layered boxes, cylinders and spheres with real
 // proportions: a low body, a glass cabin, four wheels with hubs, front
 // and rear light bars, bumpers, and — on the hero cars — a spoiler and
@@ -11,6 +12,8 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { mulberry32, pick, range } from './rng.js';
 
+// The four named garage cars. `topSpeed` is in mph; the hero cars
+// also get a neon underglow and a drawn license plate (see makeCar).
 export const GARAGE_CARS = [
   { id: 'vesper', name: 'Vesper GT', color: 0xffc21a, plate: 'NB-1987', kind: 'coupe', topSpeed: 168, owner: 'Rae Vega' },
   { id: 'coral', name: 'Coral Runner', color: 0x18b8b0, plate: 'CR-0417', kind: 'convertible', topSpeed: 142, owner: 'Rae Vega' },
@@ -39,6 +42,7 @@ export function makeTaxi(rand) {
   return cab;
 }
 
+// One wheel: tyre + metal hub, axle along X.
 function wheel() {
   const g = new THREE.Group();
   const tyre = new THREE.Mesh(
@@ -57,6 +61,8 @@ function wheel() {
   return g;
 }
 
+// A glowing light bar (front white, rear red) — emissive so it reads
+// at golden hour and at a distance.
 function lightBar(color, w = 0.5) {
   return new THREE.Mesh(
     new THREE.BoxGeometry(w, 0.16, 0.08),
@@ -64,6 +70,38 @@ function lightBar(color, w = 0.5) {
   );
 }
 
+// A license plate drawn on a canvas, so hero cars carry their real
+// plates (NB-1987, CR-0417, HH-2210, DK-0913) in screenshots.
+function makePlate(text) {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f2f2f2'; ctx.fillRect(0, 0, 256, 64);
+  ctx.strokeStyle = '#22262c'; ctx.lineWidth = 5; ctx.strokeRect(3, 3, 250, 58);
+  ctx.fillStyle = '#14213d'; ctx.font = 'bold 36px monospace';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, 128, 34);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return new THREE.Mesh(
+    new THREE.PlaneGeometry(0.62, 0.16),
+    new THREE.MeshBasicMaterial({ map: tex }),
+  );
+}
+
+// Fit four wheels to a car body of the given length.
+function addWheels(g, bodyLen) {
+  const wheelZ = bodyLen / 2 - 0.75;
+  for (const [wx, wz] of [[-0.95, wheelZ], [0.95, wheelZ], [-0.95, -wheelZ], [0.95, -wheelZ]]) {
+    const w = wheel();
+    w.position.set(wx, 0.38, wz);
+    g.add(w);
+  }
+}
+
+// Build a car from a spec. Trucks get a bed and crate instead of a
+// spoiler; hero cars (opts.hero) get neon underglow and a plate.
+// Forward is +Z — the same convention police chase steering uses.
 export function makeCar(spec, opts = {}) {
   const g = new THREE.Group();
   g.name = spec.name;
@@ -106,17 +144,12 @@ export function makeCar(spec, opts = {}) {
       g.add(strut);
     }
   }
-  // Wheels.
-  const wheelZ = bodyLen / 2 - 0.75;
-  for (const [wx, wz] of [[-0.95, wheelZ], [0.95, wheelZ], [-0.95, -wheelZ], [0.95, -wheelZ]]) {
-    const w = wheel();
-    w.position.set(wx, 0.38, wz);
-    g.add(w);
-  }
+  // Wheels: four, at the corners of the body.
+  addWheels(g, bodyLen);
   // Lights: white front bar, red rear bar, amber indicators.
   const front = lightBar(0xfff2c8, 1.5); front.position.set(0, 0.62, bodyLen / 2 + 0.62); g.add(front);
   const rear = lightBar(0xff2a2a, 1.5); rear.position.set(0, 0.62, -bodyLen / 2 - 0.02); g.add(rear);
-  // Neon underglow on hero cars.
+  // Neon underglow + plate on hero cars.
   if (opts.hero) {
     const glow = new THREE.Mesh(
       new THREE.BoxGeometry(1.7, 0.06, bodyLen * 0.9),
@@ -133,23 +166,6 @@ export function makeCar(spec, opts = {}) {
   return g;
 }
 
-function makePlate(text) {
-  const c = document.createElement('canvas');
-  c.width = 256; c.height = 64;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = '#f2f2f2'; ctx.fillRect(0, 0, 256, 64);
-  ctx.strokeStyle = '#22262c'; ctx.lineWidth = 5; ctx.strokeRect(3, 3, 250, 58);
-  ctx.fillStyle = '#14213d'; ctx.font = 'bold 36px monospace';
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(text, 128, 34);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return new THREE.Mesh(
-    new THREE.PlaneGeometry(0.62, 0.16),
-    new THREE.MeshBasicMaterial({ map: tex }),
-  );
-}
-
 // Traffic: cars that follow the road loop at steady speeds, brake for
 // the car ahead, and change lanes. Density is the point — a frame with
 // ten cars reads as a living city; a frame with two reads as a demo.
@@ -158,6 +174,9 @@ export class Traffic {
     this.scene = scene;
     this.cars = [];
     this.rand = mulberry32(2024);
+    // Lanes: east-west streets (fixed z, drive along x) and
+    // north-south streets (fixed x, drive along z). dir is the travel
+    // direction along the lane's axis.
     this.lanes = [
       { z: -150, dir: 1 }, { z: -143, dir: -1 },
       { z: 150, dir: 1 }, { z: 157, dir: -1 },

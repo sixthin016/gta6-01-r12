@@ -1,4 +1,5 @@
 // Neon Bay — main loop (game/src/main.js).
+//
 // Boots the world, wires every system together, and runs the frame
 // loop: input -> drive/walk -> traffic -> police -> combat -> fx ->
 // HUD -> render. Two modes: free play (WASD, E to steal a car, click
@@ -8,6 +9,11 @@
 // capture tool knows when the frame is done. Saves to localStorage
 // under 'neonbay.save.v12' — cash, missions, garage, respect — and
 // resumes from it on the start screen's Continue button.
+//
+// Structure: boot() builds the game object and starts the loop;
+// bindInput()/bindUi() wire events; applyShotIfAny() freezes a staged
+// shot; step() runs one frame; the helpers at the bottom are the
+// per-system pieces step() calls.
 import * as THREE from '../vendor/three.module.min.js';
 import { buildWorld, applyPhotos } from './world.js';
 import { buildTextureSet, loadPhotos } from './textures.js';
@@ -23,7 +29,11 @@ import { SHOTS, shotById, shotState, carForShot } from './shots.js';
 
 const SAVE_KEY = 'neonbay.save.v12';
 const STORM_TOTAL_SECONDS = 5 * 3600 + 18 * 60; // 05:18:00 at 17:42.
+const AUTOSAVE_SECONDS = 20;
 
+// Public game state, also exposed on window.__NEONBAY__ for the
+// capture tool: ready (first frames rendered), photoReady (sky and
+// facades loaded), errors (any window error), frames (render count).
 const state = {
   errors: [],
   frames: 0,
@@ -57,6 +67,16 @@ function writeSave(game) {
       savedAt: new Date().toISOString(),
     }));
   } catch { /* storage may be unavailable; the game still plays */ }
+}
+
+// Apply a loaded save to a fresh game: cash, progress, respect,
+// current mission, and the garage cars the save owns.
+function restoreSave(game, save) {
+  game.missions.cash = save.cash;
+  game.missions.completed = save.completed;
+  game.missions.respect = save.respect;
+  game.missions.current = save.mission;
+  game.garage = GARAGE_CARS.filter((c) => save.garage.includes(c.id));
 }
 
 export function boot() {
@@ -120,13 +140,7 @@ export function boot() {
 
   // Restore a save if one exists.
   const save = loadSave();
-  if (save) {
-    game.missions.cash = save.cash;
-    game.missions.completed = save.completed;
-    game.missions.respect = save.respect;
-    game.missions.current = save.mission;
-    game.garage = GARAGE_CARS.filter((c) => save.garage.includes(c.id));
-  }
+  if (save) restoreSave(game, save);
 
   // Populate the world densely from the start — the first frame a new
   // player sees must already feel inhabited.
@@ -134,16 +148,7 @@ export function boot() {
   crowd.spawn(22);
 
   // Rivals for the Mercado standoff (mission 8) wait near the stalls.
-  const rivals = [];
-  for (let i = 0; i < 6; i++) {
-    const r = makeRival();
-    r.position.set(-210 + i * 9, 0, -96 + (i % 2) * 8);
-    r.rotation.y = Math.PI;
-    combat.addTarget(r, 100);
-    scene.add(r);
-    rivals.push(r);
-  }
-  game.rivals = rivals;
+  game.rivals = spawnRivals(game);
 
   bindInput(game);
   bindUi(game);
@@ -183,6 +188,20 @@ export function boot() {
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
   return game;
+}
+
+// Six Viper shooters for the Mercado standoff, waiting near the stalls.
+function spawnRivals(game) {
+  const rivals = [];
+  for (let i = 0; i < 6; i++) {
+    const r = makeRival();
+    r.position.set(-210 + i * 9, 0, -96 + (i % 2) * 8);
+    r.rotation.y = Math.PI;
+    game.combat.addTarget(r, 100);
+    game.scene.add(r);
+    rivals.push(r);
+  }
+  return rivals;
 }
 
 function bindInput(game) {
@@ -263,6 +282,8 @@ function showMissions(game) {
   game.hud.pushFeed(`Mission ${m.n}/18 — ${m.name}: ${m.objective} ($${m.payout.toLocaleString('en-US')})`);
 }
 
+// --- Staged shots ----------------------------------------------------
+
 function applyShotIfAny(game) {
   const params = new URLSearchParams(window.location.search);
   const shotId = Number(params.get('shot') || 0);
@@ -277,7 +298,22 @@ function applyShotIfAny(game) {
   // capture tool takes still shows the feed lines.
   document.getElementById('start-screen').classList.add('hidden');
   game.hud.shotMode = true;
-  // Freeze the audited state.
+  freezeShotState(game, shot);
+  placePursuitUnits(game, shot);
+  placeShotCar(game, shot);
+  frameShotCamera(game, shot);
+  // Staged traffic + crowd density for this shot.
+  game.traffic.spawn(shot.traffic);
+  game.crowd.spawn(shot.walkers);
+  // Radio + feed lines from the shot definition.
+  game.audio.setStation(shot.radio);
+  for (const line of shot.feed) game.hud.pushFeed(line);
+  updateHud(game);
+}
+
+// Freeze the audited mid-game state: wanted level, missions, cash,
+// respect, speed, and where the hero and crew stand.
+function freezeShotState(game, shot) {
   game.wanted = shot.wanted;
   game.missions.completed = { A: 6, B: 7, C: 11, D: 17 }[shot.stage];
   game.missions.current = shot.mission;
@@ -301,10 +337,13 @@ function applyShotIfAny(game) {
   game.crew.dune.position.set(shot.player.x - 3, 0, shot.player.z + 2);
   game.crew.mara.position.set(shot.player.x + 3, 0, shot.player.z + 2);
   game.crew.kip.position.set(shot.player.x - 1, 0, shot.player.z + 5);
-  // Compose the pursuit into the frame: cruisers around the player
-  // (not 60 m away at the map edge), Air One high and ahead-right so
-  // the rotor and the searchlight cone are in the shot, the roadblock
-  // across the road ahead, the SWAT van behind it at 5 stars.
+}
+
+// Compose the pursuit into the frame: cruisers around the player
+// (not 60 m away at the map edge), Air One high and ahead-right so
+// the rotor and the searchlight cone are in the shot, the roadblock
+// across the road ahead, the SWAT van behind it at 5 stars.
+function placePursuitUnits(game, shot) {
   const p = shot.player;
   const fwd = { x: Math.sin(p.heading), z: Math.cos(p.heading) };
   game.police.cruisers.forEach((c, i) => {
@@ -332,31 +371,32 @@ function applyShotIfAny(game) {
     game.police.swat.position.set(p.x + fwd.x * 40, 0, p.z + fwd.z * 40);
     game.police.swat.rotation.y = Math.PI / 2;
   }
-  // The right car for the shot, close to the camera.
+}
+
+// The right car for the shot, close to the camera.
+function placeShotCar(game, shot) {
   const spec = carForShot(shot);
-  if (spec) {
-    game.scene.remove(game.playerCar);
-    game.playerCar = makeCar(spec, { hero: true });
-    game.playerCar.position.set(shot.player.x + 2, 0, shot.player.z + 6);
-    game.playerCar.rotation.y = shot.player.heading + 0.3;
-    game.scene.add(game.playerCar);
-  }
-  // Camera: low, close, looking slightly up the street so the hero
-  // car fills the lower frame and the city fills the rest.
+  if (!spec) return;
+  game.scene.remove(game.playerCar);
+  game.playerCar = makeCar(spec, { hero: true });
+  game.playerCar.position.set(shot.player.x + 2, 0, shot.player.z + 6);
+  game.playerCar.rotation.y = shot.player.heading + 0.3;
+  game.scene.add(game.playerCar);
+}
+
+// Camera: low, close, looking slightly up the street so the hero
+// car fills the lower frame and the city fills the rest.
+function frameShotCamera(game, shot) {
+  const p = shot.player;
   game.camera.position.set(p.x + shot.cam.pos[0], shot.cam.pos[1], p.z + shot.cam.pos[2]);
   game.camera.lookAt(p.x + shot.cam.look[0], shot.cam.look[1], p.z + shot.cam.look[2]);
   game.shotCamera = {
     pos: game.camera.position.clone(),
     look: new THREE.Vector3(p.x + shot.cam.look[0], shot.cam.look[1], p.z + shot.cam.look[2]),
   };
-  // Staged traffic + crowd density for this shot.
-  game.traffic.spawn(shot.traffic);
-  game.crowd.spawn(shot.walkers);
-  // Radio + feed lines from the shot definition.
-  game.audio.setStation(shot.radio);
-  for (const line of shot.feed) game.hud.pushFeed(line);
-  updateHud(game);
 }
+
+// --- HUD -------------------------------------------------------------
 
 function updateHud(game) {
   const shot = game.shot;
@@ -389,6 +429,8 @@ function updateHud(game) {
   });
 }
 
+// The live storm countdown: 05:18:00 at boot, ticking down in real
+// time toward the 23:00 landfall.
 function stormClock(game) {
   const left = Math.max(0, STORM_TOTAL_SECONDS - Math.floor(performance.now() / 1000));
   const h = String(Math.floor(left / 3600)).padStart(2, '0');
@@ -405,46 +447,58 @@ export function districtAt(pos) {
   return 'Highway Loop';
 }
 
+// --- Driving ---------------------------------------------------------
+
 // Driving and walking, extracted so the frozen staged shots can skip
 // it entirely (see step()).
 function driveOrWalk(game, dt) {
   const keys = game.keys;
   if (game.driving) {
-    const accel = keys.KeyW || keys.ArrowUp ? 26 : keys.KeyS || keys.ArrowDown ? -18 : 0;
-    const steer = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
-    game.speed = Math.max(-12, Math.min(168, game.speed + accel * dt - game.speed * 0.35 * dt));
-    if (Math.abs(game.speed) > 0.5) game.heading += steer * 1.5 * dt * Math.sign(game.speed);
-    const car = game.playerCar;
-    car.position.x += Math.sin(game.heading) * game.speed * 0.45 * dt;
-    car.position.z += Math.cos(game.heading) * game.speed * 0.45 * dt;
-    car.rotation.y = game.heading;
-    car.position.x = Math.max(-258, Math.min(258, car.position.x));
-    car.position.z = Math.max(-258, Math.min(258, car.position.z));
-    game.hero.position.copy(car.position);
-    game.hero.visible = false;
-    if (keys.ShiftLeft && Math.abs(game.speed) > 40) {
-      game.particles.burst(
-        car.position.clone().add(new THREE.Vector3(0, 0.4, -2.4).applyAxisAngle(new THREE.Vector3(0, 1, 0), game.heading)),
-        3, { color: 0x37e6ff, size: 0.6, life: 0.4, up: 0.5 },
-      );
-    }
+    driveCar(game, dt, keys);
   } else {
-    game.hero.visible = true;
-    const mv = new THREE.Vector3(
-      (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), 0,
-      (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0),
-    );
-    if (mv.lengthSq() > 0) {
-      mv.normalize().multiplyScalar(5.2 * dt);
-      game.hero.position.add(mv);
-      game.hero.rotation.y = Math.atan2(mv.x, mv.z);
-      game.hero.userData.walkPhase += dt * 8;
-    }
+    walkHero(game, dt, keys);
   }
 }
 
+function driveCar(game, dt, keys) {
+  const accel = keys.KeyW || keys.ArrowUp ? 26 : keys.KeyS || keys.ArrowDown ? -18 : 0;
+  const steer = (keys.KeyA || keys.ArrowLeft ? 1 : 0) - (keys.KeyD || keys.ArrowRight ? 1 : 0);
+  game.speed = Math.max(-12, Math.min(168, game.speed + accel * dt - game.speed * 0.35 * dt));
+  if (Math.abs(game.speed) > 0.5) game.heading += steer * 1.5 * dt * Math.sign(game.speed);
+  const car = game.playerCar;
+  car.position.x += Math.sin(game.heading) * game.speed * 0.45 * dt;
+  car.position.z += Math.cos(game.heading) * game.speed * 0.45 * dt;
+  car.rotation.y = game.heading;
+  car.position.x = Math.max(-258, Math.min(258, car.position.x));
+  car.position.z = Math.max(-258, Math.min(258, car.position.z));
+  game.hero.position.copy(car.position);
+  game.hero.visible = false;
+  if (keys.ShiftLeft && Math.abs(game.speed) > 40) {
+    // NOS boost: cyan flames from the exhaust.
+    game.particles.burst(
+      car.position.clone().add(new THREE.Vector3(0, 0.4, -2.4).applyAxisAngle(new THREE.Vector3(0, 1, 0), game.heading)),
+      3, { color: 0x37e6ff, size: 0.6, life: 0.4, up: 0.5 },
+    );
+  }
+}
+
+function walkHero(game, dt, keys) {
+  game.hero.visible = true;
+  const mv = new THREE.Vector3(
+    (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0), 0,
+    (keys.KeyS ? 1 : 0) - (keys.KeyW ? 1 : 0),
+  );
+  if (mv.lengthSq() > 0) {
+    mv.normalize().multiplyScalar(5.2 * dt);
+    game.hero.position.add(mv);
+    game.hero.rotation.y = Math.atan2(mv.x, mv.z);
+    game.hero.userData.walkPhase += dt * 8;
+  }
+}
+
+// --- Frame step ------------------------------------------------------
+
 function step(game, dt, t) {
-  const keys = game.keys;
   // Staged shots are frozen compositions: the car, traffic, crowd and
   // police were placed by applyShotIfAny and must not drive away from
   // the frozen camera while the capture tool waits (in v1 the Vesper
@@ -481,12 +535,7 @@ function step(game, dt, t) {
     game.camera.position.copy(game.shotCamera.pos);
     game.camera.lookAt(game.shotCamera.look);
   } else {
-    const back = new THREE.Vector3(Math.sin(game.heading), 0, Math.cos(game.heading)).multiplyScalar(-11);
-    const target = playerPos.clone().add(back).add(new THREE.Vector3(0, 4.6, 0));
-    game.camera.position.lerp(target, Math.min(1, dt * 4));
-    const look = playerPos.clone().add(new THREE.Vector3(0, 1.6, 0))
-      .add(new THREE.Vector3(Math.sin(game.heading), 0, Math.cos(game.heading)).multiplyScalar(10));
-    game.camera.lookAt(look);
+    updateChaseCamera(game, dt, playerPos);
   }
   const sh = game.shake.offset(t);
   game.camera.position.x += sh.x;
@@ -499,7 +548,18 @@ function step(game, dt, t) {
     game.missions.active ? missionObjectivePos(game.missions.active) : null,
   );
   game.saveTimer = (game.saveTimer || 0) + dt;
-  if (game.saveTimer > 20) { game.saveTimer = 0; writeSave(game); }
+  if (game.saveTimer > AUTOSAVE_SECONDS) { game.saveTimer = 0; writeSave(game); }
+}
+
+// Chase camera: trails 11 m behind the player at 4.6 m up, easing
+// into place, and looks 10 m ahead of the player.
+function updateChaseCamera(game, dt, playerPos) {
+  const back = new THREE.Vector3(Math.sin(game.heading), 0, Math.cos(game.heading)).multiplyScalar(-11);
+  const target = playerPos.clone().add(back).add(new THREE.Vector3(0, 4.6, 0));
+  game.camera.position.lerp(target, Math.min(1, dt * 4));
+  const look = playerPos.clone().add(new THREE.Vector3(0, 1.6, 0))
+    .add(new THREE.Vector3(Math.sin(game.heading), 0, Math.cos(game.heading)).multiplyScalar(10));
+  game.camera.lookAt(look);
 }
 
 function missionObjectivePos(m) {

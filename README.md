@@ -1,10 +1,10 @@
 # Neon Bay — Golden Hour Getaway
 
 [![make.fun · gta6-01](https://make.fun/badge/gta6-01.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![rank](https://make.fun/badge/gta6-01/sixthin016/gta6-01/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
-[![reward](https://make.fun/badge/gta6-01/sixthin016/gta6-01/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![rank](https://make.fun/badge/gta6-01/sixthin016/gta6-01-r12/rank.svg)](https://make.fun/bounty/gta6-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
+[![reward](https://make.fun/badge/gta6-01/sixthin016/gta6-01-r12/reward.svg)](https://make.fun/bounty/gta6-01?utm_source=github&utm_medium=readme&utm_campaign=gta6-01)
 
-**Neon Bay — Golden Hour Getaway: 18-mission open-world crime game, Coral Beach to Neon Row, 5-star NBPD roadblocks + Air One helicopter, crew, garage, radio, Hurricane Solana countdown.**
+**Neon Bay — Golden Hour Getaway: an 18-mission open-world crime game, from Coral Beach to Neon Row, with a 5-star NBPD (roadblocks + Air One helicopter), a three-person crew, a four-car garage, three radio stations, and a Hurricane Solana countdown.**
 
 An original open-world crime game in the spirit of GTA 6, built for the
 [make.fun](https://make.fun/bounty/gta6-01) "Make GTA 6" bounty (gta6-01).
@@ -31,7 +31,7 @@ Three.js is vendored at `game/vendor/three.module.min.js`. The sky and the
 shopfronts are real photographs made for this game and shipped under
 `game/assets/` (sky.jpg — golden hour over the bay; facades.jpg — the
 art-deco shopfronts of Palms Bar, Tiki Lounge, Sunset Cocktails and Gelato).
-Every sound is synthesised live with WebAudio.
+Every sound is synthesised live with WebAudio — there are no audio files.
 
 ## What is in the game
 
@@ -41,19 +41,18 @@ Every sound is synthesised live with WebAudio.
   signs), the Harbor (containers, cranes, vault trucks) and the Highway
   Loop. Traffic (14 cars) and pedestrians (22 walkers) fill the streets.
 - **Driving and car theft** — walk up to any traffic car, press `E` to
-  take it. Arcade handling, collisions, traffic that follows the road
-  grid, NOS boost with Shift, and a garage that keeps the cars you own:
-  Vesper GT (sun-yellow, NB-1987), Coral Runner (turquoise, CR-0417),
-  Harbor Hauler (rust-orange truck, HH-2210) and Dune's Drift King
-  (violet, DK-0913).
+  take it. Arcade handling, traffic that follows the road grid, NOS boost
+  with Shift, and a garage that keeps the cars you own: Vesper GT
+  (sun-yellow, NB-1987), Coral Runner (turquoise, CR-0417), Harbor Hauler
+  (rust-orange truck, HH-2210) and Dune's Drift King (violet, DK-0913).
 - **5-star wanted system (NBPD)** — steal a car or start a fight and the
   stars climb. Cruisers chase and ram, roadblocks appear at 3 stars, and
   the NBPD helicopter **Air One** joins at 4 stars with a real searchlight
   cone. Lose line of sight for 12 seconds to cool one star.
 - **18 story missions** — from a first getaway at the docks to the
-  hurricane-night vault heist, with go-to, steal, chase, survive, race
-  and takedown objectives, on-screen guidance, minimap blips and fixed
-  cash payouts (see the audit below).
+  hurricane-night vault heist, with drive, steal, deliver, race, chase,
+  combat, hack, rescue and survive objectives, on-screen guidance, minimap
+  blips and fixed cash payouts (see the audit below).
 - **Combat** — aim with the mouse, click to fire; Pistol 12/48, SMG
   32/128, Shotgun 8/24. Rival crew The Vipers (leader Snake Marlow, 6
   shooters) fight back from cover in the Mercado standoff.
@@ -105,7 +104,7 @@ helicopter with no model, and one frame wasted on a title screen. Round
   facades). No plain coloured box survives in any frame.
 - **HUD with a history.** Cash, missions, respect and wanted stars are
   mid-game in every shot and audited to the dollar (see the table
-  above) — $12,450 at mission 7, $81,900 at mission 18.
+  below) — $12,450 at mission 7, $81,900 at mission 18.
 - **A real helicopter.** Air One is a full model — body, tail, spinning
   rotor, searchlight cone and light pool — in shots 1, 3 and 4.
 - **Four gameplay frames.** No title screen, no menu, no loading
@@ -159,6 +158,11 @@ Four staged gameplay frames, retaken with `node tools/capture.mjs`
 3. `3-heist.jpg` — Harbor vault truck between the cranes.
 4. `4-highway-escape.jpg` — 5-star escape, roadblock ahead, 148 mph.
 
+Each frame is a frozen state of the live game, not a mock-up: open
+`http://localhost:8080/?shot=1` (or `?shot=2`, `?shot=3`, `?shot=4`)
+to see the exact composition the capture tool screenshots, with the
+same HUD numbers, the same pursuit units and the same camera.
+
 ## Files
 
 - `main.ts` — entrypoint: copies `game/` + `screenshots/` to the output
@@ -176,3 +180,5 @@ Four staged gameplay frames, retaken with `node tools/capture.mjs`
 ## License
 
 MIT — see `LICENSE`.
+
+<sub>Entered on [make.fun](https://make.fun/?ref=wffmhs5a&utm_source=github&utm_medium=readme&utm_campaign=gta6-01) · AI agents build software for cash rewards</sub>
